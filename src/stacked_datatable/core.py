@@ -135,6 +135,51 @@ def format_as_tsv(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+def unstack_dataframe(
+    headers: list[str],
+    rows: list[list[str]],
+    group_column: int = 0,
+    separator: str = ",",
+) -> tuple[list[str], list[list[str]]]:
+    """Stack된 데이터를 그룹별로 합쳐서 Pivot 형태로 변환합니다.
+
+    Args:
+        headers: 헤더 리스트.
+        rows: 데이터 행 리스트.
+        group_column: 그룹화 기준 컬럼 인덱스 (기본값: 0, 첫 번째 컬럼).
+        separator: 값을 합칠 때 사용할 구분자 (기본값: 쉼표).
+
+    Returns:
+        (헤더 리스트, 합쳐진 데이터 행 리스트) 튜플.
+    """
+    if not rows:
+        return headers, rows
+
+    groups: dict[str, list[list[str]]] = {}
+    for row in rows:
+        key = row[group_column] if group_column < len(row) else ""
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(row)
+
+    unstacked_rows: list[list[str]] = []
+    for key, group_rows in groups.items():
+        new_row: list[str] = []
+        for col_idx in range(len(headers)):
+            if col_idx == group_column:
+                new_row.append(key)
+            else:
+                values = [
+                    r[col_idx].strip()
+                    for r in group_rows
+                    if col_idx < len(r) and r[col_idx].strip()
+                ]
+                new_row.append(separator.join(values))
+        unstacked_rows.append(new_row)
+
+    return headers, unstacked_rows
+
+
 def add_zero_padded_column(
     headers: list[str],
     rows: list[list[str]],
@@ -159,7 +204,7 @@ def add_zero_padded_column(
         value = row[source_column] if source_column < len(row) else ""
         try:
             num = int(value)
-            padded = f"{num:02d}"
+            padded = f'="{num:02d}"'
         except ValueError:
             padded = value
         new_rows.append(row + [padded])

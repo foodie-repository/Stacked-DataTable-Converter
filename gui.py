@@ -13,6 +13,7 @@ from src.stacked_datatable.core import (
     add_zero_padded_column,
     parse_clipboard_data,
     stack_dataframe,
+    unstack_dataframe,
 )
 
 HTML = """
@@ -49,6 +50,28 @@ HTML = """
         textarea:focus { outline: none; border-color: #007AFF; }
         textarea:disabled { background: #fafafa; }
         .buttons { display: flex; gap: 10px; justify-content: center; padding: 10px 0; }
+        .options {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            align-items: center;
+            padding: 10px 0;
+            background: #fff;
+            border-radius: 8px;
+            margin-bottom: 5px;
+        }
+        .option-group { display: flex; align-items: center; gap: 8px; }
+        .option-group label { font-weight: 500; color: #555; margin: 0; }
+        select {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 13px;
+            background: white;
+        }
+        select:focus { outline: none; border-color: #007AFF; }
+        .separator-options { display: none; }
+        .separator-options.visible { display: flex; }
         button {
             padding: 10px 24px;
             border: none;
@@ -79,8 +102,25 @@ HTML = """
             <label>엑셀에서 복사한 데이터를 붙여넣으세요:</label>
             <textarea id="input" placeholder="여기에 붙여넣기 (Ctrl+V / Cmd+V)"></textarea>
         </div>
+        <div class="options">
+            <div class="option-group">
+                <label>모드:</label>
+                <select id="mode" onchange="onModeChange()">
+                    <option value="stack">Stack (펼치기)</option>
+                    <option value="unstack">Unstack (합치기)</option>
+                </select>
+            </div>
+            <div class="option-group separator-options" id="separatorOptions">
+                <label>구분자:</label>
+                <select id="separator">
+                    <option value="comma">쉼표 (,)</option>
+                    <option value="space">공백</option>
+                    <option value="tab">탭</option>
+                </select>
+            </div>
+        </div>
         <div class="buttons">
-            <button class="primary" onclick="convert()">변환 (Stack)</button>
+            <button class="primary" onclick="convert()">변환</button>
             <button class="secondary" onclick="saveCSV()">CSV로 저장</button>
             <button class="secondary" onclick="clearAll()">지우기</button>
         </div>
@@ -91,14 +131,23 @@ HTML = """
         <div id="status" class="status">준비</div>
     </div>
     <script>
+        function onModeChange() {
+            const mode = document.getElementById('mode').value;
+            const sepOptions = document.getElementById('separatorOptions');
+            sepOptions.className = mode === 'unstack' 
+                ? 'option-group separator-options visible' 
+                : 'option-group separator-options';
+        }
         async function convert() {
             const input = document.getElementById('input').value;
             if (!input.trim()) {
                 setStatus('데이터를 입력해주세요.', 'error');
                 return;
             }
+            const mode = document.getElementById('mode').value;
+            const separator = document.getElementById('separator').value;
             try {
-                const result = await pywebview.api.convert(input);
+                const result = await pywebview.api.convert(input, mode, separator);
                 if (result.error) {
                     setStatus(result.error, 'error');
                 } else {
@@ -148,27 +197,42 @@ class Api:
         self.stacked_rows: list[list[str]] = []
         self.window: webview.Window | None = None
 
-    def convert(self, input_data: str) -> dict:
+    def convert(
+        self, input_data: str, mode: str = "stack", separator: str = "comma"
+    ) -> dict:
         try:
             headers, rows = parse_clipboard_data(input_data)
-            self.stacked_headers, self.stacked_rows = stack_dataframe(headers, rows)
+            original_row_count = len(rows)
 
-            wafer_col_idx = (
-                self.stacked_headers.index("Wafer")
-                if "Wafer" in self.stacked_headers
-                else 1
-            )
-            self.stacked_headers, self.stacked_rows = add_zero_padded_column(
-                self.stacked_headers, self.stacked_rows, wafer_col_idx, "Wafer_Padded"
-            )
+            separator_map = {"comma": ",", "space": " ", "tab": "\t"}
+            actual_separator = separator_map.get(separator, ",")
+
+            if mode == "stack":
+                self.stacked_headers, self.stacked_rows = stack_dataframe(headers, rows)
+                wafer_col_idx = (
+                    self.stacked_headers.index("Wafer")
+                    if "Wafer" in self.stacked_headers
+                    else 1
+                )
+                self.stacked_headers, self.stacked_rows = add_zero_padded_column(
+                    self.stacked_headers,
+                    self.stacked_rows,
+                    wafer_col_idx,
+                    "Wafer_Padded",
+                )
+            else:
+                self.stacked_headers, self.stacked_rows = unstack_dataframe(
+                    headers, rows, group_column=0, separator=actual_separator
+                )
 
             result_lines = ["\t".join(self.stacked_headers)]
             for row in self.stacked_rows:
                 result_lines.append("\t".join(row))
 
+            mode_text = "Stack" if mode == "stack" else "Unstack"
             return {
                 "data": "\n".join(result_lines),
-                "message": f"변환 완료: {len(rows)}행 → {len(self.stacked_rows)}행",
+                "message": f"{mode_text} 완료: {original_row_count}행 → {len(self.stacked_rows)}행",
             }
         except ValueError as e:
             return {"error": str(e)}
